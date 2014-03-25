@@ -1,4 +1,10 @@
-﻿module st.net.http;
+﻿///////////////////////////////////////////////////////////////////////////////
+//
+// Rapira SCGI Project
+//
+// HTTP common definitions
+//
+module st.net.http;
 
 
 enum HTTPStatusCode { 

@@ -1,4 +1,12 @@
-﻿module st.net.scgi;
+﻿///////////////////////////////////////////////////////////////////////////////
+//
+// Rapira SCGI Project
+//
+// Simple Common Gatewey Interface server implementation
+// -----------------------------------------------------
+// SCGI protocol [http://python.ca/scgi/protocol.txt]
+//
+module st.net.scgi;
 
 import std.array;
 import std.algorithm;
@@ -11,8 +19,11 @@ import std.process;
 import std.regex;
 import std.uri;
 import st.net.http;
+import st.net.cookie;
 
-class CGIRequest {
+
+///////////////////////////////////////////////////////////////////////////////
+class Request {
   string header_data;
   string content_data;
 
@@ -41,7 +52,9 @@ class CGIRequest {
 
 	private   string[string] params_data; // QUERY_STRING
 	@property string[string] params() { return params_data; }
-
+  
+//  mixin Cookies;
+  
 	this(string header_data, string content_data)
 	{
     this.header_data = header_data;
@@ -67,22 +80,35 @@ class CGIRequest {
 	}
 }
 
-class CGIResponse {
-  string[string] headers;
+class RequestCookie: Request
+{
+  mixin Cookies;
+
+	this(string header_data, string content_data) { super(header_data, content_data); }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+class Response {
+  string[][string] headers;
   string output;
+
+  mixin Cookies;
   
   this(string content_type = "text/html; charset=utf-8")
   {
-    headers["Content-Type"] = content_type;
+    headers["Content-Type"] = [content_type];
     status_code(HTTPStatusCode.OK);
   }
 
 	string form_headers_string()
 	{
     string result;
-		foreach(key, value; headers) {
-			result ~= key ~ ": " ~ value ~ "\r\n";
-		}
+		foreach(key, values; headers) 
+      foreach(value; values)
+      {
+        result ~= key ~ ": " ~ value ~ "\r\n";
+      }
+    
 		return result;    
 	}
 
@@ -92,13 +118,13 @@ class CGIResponse {
 			assert(code > 99 && code < 1000);
 		}
 		body {
-			headers["Status"] = to!string(code);
+			headers["Status"] = [to!string(code)];
 		}
 
 		int status_code()
 		{
 			if( "Status" in this.headers ) 
-				return to!int(this.headers["Status"]);
+				return to!int(this.headers["Status"][0]);
 			else
 				return HTTPStatusCode.OK; // RFC3875 6.2.1 -- status 200 'OK' is assumed if it is omitted.
 		}
@@ -109,21 +135,52 @@ class CGIResponse {
   }
 }
 
+
+///////////////////////////////////////////////////////////////////////////////
 struct RouteEntry
 {
 	string group;
-  void function(CGIRequest, CGIResponse, string[string] context) handler;
+  void function(Request, Response, string[string] context) handler;
   Regex!char path_pattern;
 }
 
-class SCGIApp 
+
+///////////////////////////////////////////////////////////////////////////////
+class Tween {
+  void preprocess(Request request, Response response) {};
+  void postprocess(Request request, Response response) {};
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+class SessionTween: Tween
+{
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+class HTMLFormDataParserTween: Tween
+{
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+class SCGIServer(RequestT = RequestCookie, ResponseT = Response) 
+  if( is(RequestT : Request) && is(ResponseT : Response) )
 {
   protected Socket server;
   
   RouteEntry[] routes;
+  Tween[] tweens;
   
 	this(int port = 8080)
 	{
+    tweens = [ 
+      cast(Tween)new HTTPCookiesTween(),
+      cast(Tween)new SessionTween(),
+      cast(Tween)new HTMLFormDataParserTween(),
+    ];
+    
     server = new TcpSocket();
     server.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, true);
     server.bind(new InternetAddress(8080));
@@ -175,11 +232,13 @@ class SCGIApp
             writefln("%s\n-------------", header_data);
             writefln("%s", content_data);
             
-            auto request = new CGIRequest(header_data, content_data);
-            auto response = new CGIResponse();
-            
-            route_request(request, response);
-            
+            auto request  = new RequestT(header_data, content_data);
+            auto response = new ResponseT();
+    
+            foreach(tween; tweens) tween.preprocess(request, response);            
+            route_request(request, response);            
+            foreach(tween; tweens) tween.postprocess(request, response);
+
             client.send(response.buffer);
             
             buffer.length = 0;
@@ -203,10 +262,14 @@ class SCGIApp
     }
   }
   
-  void route_request(CGIRequest request, CGIResponse response)
+  bool route_request(RequestT request, ResponseT response)
   {
+    bool route_match_found = false;
+    
     foreach(route; routes)
       if( auto m = match(request.path, route.path_pattern) ) {
+        route_match_found = true;
+        
         string[string] context;
         foreach(name; route.path_pattern.namedCaptures) context[name] = m.captures[name];
         
@@ -214,5 +277,7 @@ class SCGIApp
         
         break;
       }
+    
+    return route_match_found;
   }
 }

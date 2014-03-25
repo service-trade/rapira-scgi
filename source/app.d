@@ -21,7 +21,7 @@ string escapeHTML(string unsafe)
 		.replace("'", "&#039;");			    
 }
 
-void index_view(CGIRequest request, CGIResponse response, string[string] context)
+void index_view(Request request, Response response, string[string] context)
 {
 	string html_tpl =
 `
@@ -70,17 +70,21 @@ void index_view(CGIRequest request, CGIResponse response, string[string] context
 	html_tpl = html_tpl.replace("{{ context }}", ctx);
 
 	response.output ~= html_tpl ~ "\r\n";
+  
+  //response.set_cookie("test_cookie", "test_value");
+  //response.set_cookie("test_cookie2", "test_value2");
+  //response.set_cookie("test_cookie3", "test_value3");
 }
 
 void main(string[] args)
 {
-	auto cgiapp = new SCGIApp();
+	auto srv = new SCGIServer!();
 
-  cgiapp.routes = [
+  srv.routes = [
     RouteEntry("default", &index_view, regex(r"^/rapira/test/(?P<testid>\d+)/*$")),
     RouteEntry("default", &index_view, regex(r"^.*$"))
   ];
   
-  cgiapp.run();
+  srv.run();
 }
 
