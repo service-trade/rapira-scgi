@@ -10,6 +10,8 @@ import st.net.scgi;
 import st.net.http;
 import std.uri;
 import std.regex;
+import std.datetime;
+import st.net.cookie;
 
 string escapeHTML(string unsafe)
 {
@@ -71,7 +73,8 @@ void index_view(Request request, Response response, string[string] context)
 
 	response.output ~= html_tpl ~ "\r\n";
   
-  //response.set_cookie("test_cookie", "test_value");
+  (response.new_cookie("test_cookie", "new_test_value111")).mark_as_persistent();
+  
   //response.set_cookie("test_cookie2", "test_value2");
   //response.set_cookie("test_cookie3", "test_value3");
 }
@@ -85,6 +88,18 @@ void main(string[] args)
     RouteEntry("default", &index_view, regex(r"^.*$"))
   ];
   
+  writeln("Rapira SCGI started.");
+  
+  string header;
+  string content;
+ 
+  string req_header = "CONTENT_LENGTH\x003\x00HTTP_METHOD\x00GET\x00";
+  string test_message = to!string(req_header.length) ~ ':' ~ req_header ~ ",abc"; 
+  writeln(test_message);
+  writeln(srv.parse_scgi_request(test_message[0 .. $-3], header, content));
+  writeln(header);
+  writeln(content);
+
   srv.run();
 }
 

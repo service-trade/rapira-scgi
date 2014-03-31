@@ -20,6 +20,7 @@ import std.regex;
 import std.uri;
 import st.net.http;
 import st.net.cookie;
+import st.net.forms;
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -53,7 +54,7 @@ class Request {
 	private   string[string] params_data; // QUERY_STRING
 	@property string[string] params() { return params_data; }
   
-//  mixin Cookies;
+  mixin HttpCookiesMixin;
   
 	this(string header_data, string content_data)
 	{
@@ -80,19 +81,12 @@ class Request {
 	}
 }
 
-class RequestCookie: Request
-{
-  mixin Cookies;
-
-	this(string header_data, string content_data) { super(header_data, content_data); }
-}
-
 ///////////////////////////////////////////////////////////////////////////////
 class Response {
   string[][string] headers;
   string output;
 
-  mixin Cookies;
+  mixin HttpCookiesMixin;
   
   this(string content_type = "text/html; charset=utf-8")
   {
@@ -159,13 +153,7 @@ class SessionTween: Tween
 
 
 ///////////////////////////////////////////////////////////////////////////////
-class HTMLFormDataParserTween: Tween
-{
-}
-
-
-///////////////////////////////////////////////////////////////////////////////
-class SCGIServer(RequestT = RequestCookie, ResponseT = Response) 
+class SCGIServer(RequestT = Request, ResponseT = Response) 
   if( is(RequestT : Request) && is(ResponseT : Response) )
 {
   protected Socket server;
@@ -176,7 +164,7 @@ class SCGIServer(RequestT = RequestCookie, ResponseT = Response)
 	this(int port = 8080)
 	{
     tweens = [ 
-      cast(Tween)new HTTPCookiesTween(),
+      cast(Tween)new HttpCookiesTween(),
       cast(Tween)new SessionTween(),
       cast(Tween)new HTMLFormDataParserTween(),
     ];
@@ -190,12 +178,75 @@ class SCGIServer(RequestT = RequestCookie, ResponseT = Response)
     
 	}
 
+	class InvalidSCGIRequest: Exception
+	{
+		this(string message)
+		{
+			super(message);
+		}
+	}
+	
+	bool parse_scgi_request(string buffer, out string header, out string content)
+	{
+		if( buffer.length == 0 ) return false;
+
+		// Найти в буфере первое вхождение символа ':'
+		size_t netstr_length = 0;
+		size_t header_start = 0;
+		foreach(size_t i, char c; buffer)
+			if( c == ':' ) {
+				// Попытаться предыдущую часть массива преобразовать к значению типа size_t,
+				// если при конвертации возникла ошибка, то выкинуть исключени о недопустимости такого запроса.
+				try { netstr_length = to!size_t(buffer[0 .. i]); } catch(ConvException e) { throw new InvalidSCGIRequest("Invalid netstring length literal!"); }
+				
+				// Используя полученное значение проверить, что в буфере содержиться вся строка типа netstring, если нет вернуть False
+				if( buffer.length < i + 1 + netstr_length + 1 ) return false;
+				if( buffer[i + 1 + netstr_length] != ',' ) throw new InvalidSCGIRequest("Broken netstring!");
+				
+				// Выделить содержимое заголовка из строки типа netstring в отдельный массив типа char[]
+				header_start = i + 1;
+				header = buffer[header_start .. header_start + netstr_length];
+								 
+				break;
+			} 
+		// Если не удалось найти его, и размер данных в буфера уже достаточен, чтобы вместить литерал максимального значения
+		// типа size_t и символ ':', то выкинуть исключение о недопустимости такого запроса.
+		if( netstr_length == 0 && buffer.length >= to!string(size_t.max).length + 1 ) throw new InvalidSCGIRequest("Broken netstring or length literal too long");  
+		
+		
+		// Убедиться что в начале заголовка присутсnвует поле с именем CONTENT_LENGTH, если нет выкинуть исключение о недопустимости
+		// такого запроса.
+		if( header[0 .. "CONTENT_LENGTH".length] != "CONTENT_LENGTH" ) throw new InvalidSCGIRequest("CONTENT_LENGTH field must be first!");
+				
+		// Считать значение поле CONTENT_LENGTH в формате (^CONTENT_LENGTH\0\d+\0) и попытаться преобразовать к значению типа size_t
+		// если при конвертации возникла ошибка, то выкинуть исключени о недопустимости такого запроса.
+		size_t content_length = 0;
+		bool content_length_valid = false;
+		foreach(size_t i, char c; header["CONTENT_LENGTH\0".length .. $])
+			if( c == '\0' ) {
+				try{ content_length = to!size_t(header["CONTENT_LENGTH\0".length .. "CONTENT_LENGTH\0".length + i]); } catch(ConvException e) { throw new InvalidSCGIRequest("Invalid CONTENT_LENGTH value literal!"); }				
+				content_length_valid = true;
+				break;
+			}
+		if( !content_length_valid ) throw new InvalidSCGIRequest("Invalid CONTENT_LENGTH value literal!");
+
+		// Зная длинну заголовка в формате строки netstring и получив значение размера контента убедиться, что в буфере находятся
+		// все данные запроса, если нет вернуть False.
+		auto content_start = header_start + netstr_length + 1; 
+		if( buffer.length < content_start + content_length ) return false; 
+		
+		// Выделить данные контента из буфера и вернуть True.    
+		content = buffer[content_start .. content_start + content_length];		 
+		return true;
+	}
+
   void run()
-  {
+  { 
     while(true) {
       Socket client = server.accept();
-
-      char[] buffer = new char[0];
+      
+      auto buffer = appender!(char[])();
+      buffer.reserve(4096);
       char[4096] chunk;
       auto received = 0;
       
@@ -208,55 +259,29 @@ class SCGIServer(RequestT = RequestCookie, ResponseT = Response)
 
       do {
         received = client.receive(chunk);
-        buffer ~= chunk[0..received];
-        
-        // Проверяем, что полученные в буфер данные похожи на SCGI запрос,
-        // и извлекаем данные о длинах заголовка и контента, 
-        // иначе повторяем чтение из сокета для получения остальных данных.
-        if( auto m = match(buffer, header_pattern) ) {
-          uint header_len  = to!uint(m.captures["header_len"]);
-          uint content_len = to!uint(m.captures["content_len"]);
-          
-          // Если размер полученных данных в буфере соответствует указанным длинам заголовка и контента,
-          // выпиливаем соответствующие части из буфера и продолжаем обработку запроса далее, 
-          // иначе повторяем чтение из сокета для получения остальных данных.
-          if( buffer.length == (m.captures["header_len"].length + 1 + header_len + 1 + content_len) ) {
-            uint i = 0;
-            
-            while( buffer[i++] != ':') {}              
-            auto header_data = cast(string)buffer[i .. i + header_len];
-            
-            i += header_len + 1;
-            auto content_data = cast(string)buffer[i .. i + content_len];
-            
-            writefln("%s\n-------------", header_data);
-            writefln("%s", content_data);
-            
-            auto request  = new RequestT(header_data, content_data);
-            auto response = new ResponseT();
-    
-            foreach(tween; tweens) tween.preprocess(request, response);            
-            route_request(request, response);            
-            foreach(tween; tweens) tween.postprocess(request, response);
+	      if( received == -1 ) { } // ошибку обработать надо бы.
+        buffer.put(chunk[0..received]);
+      	
+      	string header;
+      	string content;              
 
-            client.send(response.buffer);
-            
-            buffer.length = 0;
-            break;
-          }             
-        }
-        
-        static const max_uint_literal_len = to!string(uint.max).length;
-        
-        if( buffer.length >= max_uint_literal_len + 1 ) 
-          enforce( match(buffer, r"^\d+:[\x00-\xFF]*"), "Invalid request!"); 
-        
-        if( buffer.length >= max_uint_literal_len + 1 + "CONTENT_LENGTH:".length + 1 + max_uint_literal_len ) 
-          enforce( match(buffer, r"^\d+:[\x00-\xFF]*"), "Invalid request!"); 
-        
-      } 
-      while( true );
-      
+	      if( parse_scgi_request(cast(string)buffer.data, header, content) ) {
+          writefln("%s\n-------------", header);
+          writefln("%s", content);
+          
+          auto request  = new RequestT(header, content);
+          auto response = new ResponseT();
+  
+          foreach(tween; tweens) tween.preprocess(request, response);            
+          route_request(request, response);            
+          foreach(tween; tweens) tween.postprocess(request, response);
+
+          client.send(response.buffer);
+          
+          break;
+	      } 	      
+      } while( received > 0 );
+                      
       client.shutdown(SocketShutdown.BOTH);
       client.close();
     }

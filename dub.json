@@ -1,11 +1,11 @@
 {
-	"name": "rapira-cgi",
+	"name": "rapira-scgi",
 	"description": "Rapira project with SCGI server application.",
 	"copyright": "Copyright © 2014, lial",
 	"authors": ["lial"],
 	"dependencies": {
 		"dpq2": "~master",
 		"temple": "~master",
-		"mustache-d": "~master",
+		"mustache-d": "~master"
 	}
-}
+} 
