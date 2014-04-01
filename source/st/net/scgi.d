@@ -54,7 +54,8 @@ class Request {
 	private   string[string] params_data; // QUERY_STRING
 	@property string[string] params() { return params_data; }
   
-  mixin HttpCookiesMixin;
+	mixin HttpCookiesMixin;
+	mixin FormDataMixin;
   
 	this(string header_data, string content_data)
 	{

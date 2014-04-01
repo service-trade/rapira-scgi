@@ -4,8 +4,5 @@
 	"copyright": "Copyright © 2014, lial",
 	"authors": ["lial"],
 	"dependencies": {
-		"dpq2": "~master",
-		"temple": "~master",
-		"mustache-d": "~master"
 	}
 } 

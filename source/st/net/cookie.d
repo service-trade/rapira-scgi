@@ -89,8 +89,7 @@ class HttpCookiesTween: Tween
 {
   override void preprocess(Request request, Response response)
   {
-    if( "HTTP_COOKIE" !in request.meta_variables    ) return;
-    if( request.meta_variables["HTTP_COOKIE"] == "" ) return;
+    if( request.meta_variables.get("HTTP_COOKIE", "") == "" ) return;
     
     foreach(cookie; request.meta_variables["HTTP_COOKIE"].split("; "))
     {

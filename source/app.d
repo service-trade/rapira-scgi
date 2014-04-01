@@ -5,7 +5,7 @@ import std.array;
 import std.string;
 import std.stdio;
 import std.process;
-import mustache;
+//import mustache;
 import st.net.scgi;
 import st.net.http;
 import std.uri;
@@ -40,16 +40,20 @@ void index_view(Request request, Response response, string[string] context)
 		<h2>params</h2>
 		<table>
 			{{ params }}
-    </table>
+		</table>
 		<h2>context</h2>
 		<table>
 			{{ context }}
-    </table>
+		</table>
+		<h2>form_data</h2>
+		<table>
+			{{ form_data }}
+		</table>
 	</body>
 </html>`.strip();
 
 
-  string env = "";
+  	string env = "";
 	foreach(varname, varval; request.meta_variables)
 		if( varname != "QUERY_STRING" )
 			env ~= "<tr><td>" ~ varname ~ "</td><td><pre>" ~ escapeHTML(varval) ~ "</pre></td></tr>\n";
@@ -71,6 +75,12 @@ void index_view(Request request, Response response, string[string] context)
 
 	html_tpl = html_tpl.replace("{{ context }}", ctx);
 
+	string form_data;
+	foreach(pname, pval; request.form_data)
+		form_data ~= "<tr><td>" ~ pname ~ "</td><td><pre>" ~ escapeHTML(pval) ~ "</pre></td></tr>\n";
+
+	html_tpl = html_tpl.replace("{{ form_data }}", form_data);
+
 	response.output ~= html_tpl ~ "\r\n";
   
   (response.new_cookie("test_cookie", "new_test_value111")).mark_as_persistent();
@@ -89,16 +99,6 @@ void main(string[] args)
   ];
   
   writeln("Rapira SCGI started.");
-  
-  string header;
-  string content;
- 
-  string req_header = "CONTENT_LENGTH\x003\x00HTTP_METHOD\x00GET\x00";
-  string test_message = to!string(req_header.length) ~ ':' ~ req_header ~ ",abc"; 
-  writeln(test_message);
-  writeln(srv.parse_scgi_request(test_message[0 .. $-3], header, content));
-  writeln(header);
-  writeln(content);
 
   srv.run();
 }
